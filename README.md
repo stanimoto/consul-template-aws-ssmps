@@ -32,7 +32,7 @@ If you would like to get a value for a specific version, you can append a colon 
 
 ### Multiple Parameter Names
 
-You can use the plugin multiple times in a single template, but the plugin is executed for each occurance so it can be slow.
+You can use the plugin multiple times in a single template, but the plugin is executed for each occurance so it can be slow and you may hit the API rate limit especially if you run consul-template in multiple instances. As of writing, the Parameter Store currently has 40 GET API (shared) requests/sec limit.
 
 If you pass multiple parameter names, they will be loaded in a single execution so it will be faster. A returned value is a JSON and you can save it to a variable for later use.
 

@@ -24,7 +24,42 @@ func main() {
 	}))
 	svc := ssm.New(sess)
 
-	fmt.Println(getMultipleParamValues(svc, os.Args[1:]))
+	basePath := os.Getenv("SSMPS_BASE_PATH")
+	names := os.Args[1:]
+
+	nameToPath := makeNameToPathMap(basePath, names)
+	paths := []string{}
+	for _, path := range nameToPath {
+		paths = append(paths, path)
+	}
+
+	pathToValue, err := getMultipleParamValues(svc, paths)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if len(names) == 1 {
+		path := nameToPath[names[0]]
+		fmt.Println(pathToValue[path])
+	} else {
+		// Treat as multiple parameters even if the same name is given twice.
+		nameToValue := map[string]string{}
+
+		for name, path := range nameToPath {
+			value, ok := pathToValue[path]
+			if ok {
+				nameToValue[name] = value
+			} else {
+				nameToValue[name] = ""
+			}
+		}
+
+		data, err := json.Marshal(nameToValue)
+		if err != nil {
+			log.Fatalf("Error marshalling data: %s", err)
+		}
+		fmt.Printf("%s\n", data)
+	}
 
 	os.Exit(0)
 }
@@ -68,8 +103,33 @@ func normalizeParamName(name string) string {
 	return name
 }
 
+func makeNameToPathMap(basePath string, names []string) map[string]string {
+	m := map[string]string{}
+
+	for _, name := range names {
+		path := makePath(basePath, name)
+		m[name] = path
+	}
+
+	return m
+}
+
+func makeBatches(values []string, batchSize int) ([][]string, error) {
+	batches := [][]string{}
+
+	if batchSize < 1 {
+		return nil, fmt.Errorf("batchSize must be greater than 0")
+	}
+
+	for batchSize < len(values) {
+		values, batches = values[batchSize:], append(batches, values[0:batchSize:batchSize])
+	}
+	batches = append(batches, values)
+
+	return batches, nil
+}
+
 func getParamValue(svc ssmiface.SSMAPI, name string) (string, error) {
-	// TODO: use svc.GetParameters instead for optimization
 	output, err := svc.GetParameter(&ssm.GetParameterInput{
 		Name:           &name,
 		WithDecryption: aws.Bool(true),
@@ -93,25 +153,50 @@ func getParamValue(svc ssmiface.SSMAPI, name string) (string, error) {
 	return *output.Parameter.Value, nil
 }
 
-func getMultipleParamValues(svc ssmiface.SSMAPI, names []string) string {
-	m := map[string]string{}
-
-	for _, name := range names {
-		path := makePath(os.Getenv("SSMPS_BASE_PATH"), name)
-		value, err := getParamValue(svc, path)
-		if err != nil {
-			log.Fatal(err)
-		}
-		m[name] = value
-	}
-
-	if len(m) == 1 {
-		return m[names[0]]
-	}
-
-	data, err := json.Marshal(m)
+func getMultipleParamValues(svc ssmiface.SSMAPI, names []string) (map[string]string, error) {
+	batches, err := makeBatches(names, 10) // This is the limit of the GetParameters endpoint.
 	if err != nil {
-		log.Fatalf("Error marshalling data: %s", err)
+		log.Fatalf("ssmps returned error: %s", err)
 	}
-	return fmt.Sprintf("%s", data)
+
+	pathToValue := map[string]string{}
+	// Defaults to an empty string
+	for _, name := range names {
+		pathToValue[name] = ""
+	}
+
+	for _, batch := range batches {
+		paths := []*string{}
+		for _, path := range batch {
+			copy := path
+			paths = append(paths, &copy)
+		}
+
+		output, err := svc.GetParameters(&ssm.GetParametersInput{
+			Names:          paths,
+			WithDecryption: aws.Bool(true),
+		})
+
+		if err != nil {
+			aerr, ok := err.(awserr.Error)
+			if ok {
+				return nil, fmt.Errorf("ssmps returned error: %s", aerr.Code())
+			}
+			return nil, fmt.Errorf("ssmps returned unknown error: %s", err)
+		}
+
+		for _, p := range output.InvalidParameters {
+			log.Printf("ssmps(%q) returned no data: Invalid Parameter", *p)
+		}
+
+		for _, p := range output.Parameters {
+			path := *p.Name
+			if p.Selector != nil {
+				path += *p.Selector
+			}
+			pathToValue[path] = *p.Value
+		}
+	}
+
+	return pathToValue, nil
 }
