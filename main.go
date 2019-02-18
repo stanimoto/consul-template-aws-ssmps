@@ -19,7 +19,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	sess := session.Must(session.NewSession())
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
 	svc := ssm.New(sess)
 
 	fmt.Println(getMultipleParamValues(svc, os.Args[1:]))
