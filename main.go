@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ssm"
 	"github.com/aws/aws-sdk-go/service/ssm/ssmiface"
@@ -24,7 +25,20 @@ func main() {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 	}))
-	svc := ssm.New(sess)
+
+	var awsRegion *string
+	if aws.StringValue(sess.Config.Region) == "" {
+		ec2Session := session.New()
+		ec2Svc := ec2metadata.New(ec2Session)
+		ec2Region, err := ec2Svc.Region()
+		if err == nil {
+			awsRegion = aws.String(ec2Region)
+		}
+	}
+
+	svc := ssm.New(sess, &aws.Config{
+		Region: awsRegion,
+	})
 
 	basePath := os.Getenv("SSMPS_BASE_PATH")
 	names := os.Args[1:]
