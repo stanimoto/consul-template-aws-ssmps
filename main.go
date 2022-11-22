@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ssm"
 	"github.com/aws/aws-sdk-go/service/ssm/ssmiface"
-	"github.com/aws/aws-sdk-go/aws/credentials"
 )
 
 const version = "0.1.1"
@@ -22,19 +21,9 @@ func main() {
 	if !validateArgs(os.Args) {
 		os.Exit(1)
 	}
-	var config aws.Config
-	endpoint := os.Getenv("LOCALSTACK_ENDPOINT")
-	if (endpoint != "") {
-		config = aws.Config{
-			Region:           aws.String(os.Getenv("AWS_REGION")),
-			Credentials:      credentials.NewStaticCredentials("test", "test", ""),
-			S3ForcePathStyle: aws.Bool(true),
-			Endpoint:         aws.String(endpoint),
-		  }
-	}
+
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
-		Config: config,
 	}))
 
 	var awsRegion *string
@@ -49,6 +38,7 @@ func main() {
 
 	svc := ssm.New(sess, &aws.Config{
 		Region: awsRegion,
+		Endpoint: aws.String(os.Getenv("AWS_ENDPOINT_URL")),
 	})
 
 	basePath := os.Getenv("SSMPS_BASE_PATH")
