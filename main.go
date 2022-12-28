@@ -35,10 +35,9 @@ func main() {
 			awsRegion = aws.String(ec2Region)
 		}
 	}
-
 	svc := ssm.New(sess, &aws.Config{
 		Region: awsRegion,
-		Endpoint: aws.String(os.Getenv("AWS_ENDPOINT_URL")),
+		Endpoint: aws.String(os.Getenv("SSM_ENDPOINT_URL")),
 	})
 
 	basePath := os.Getenv("SSMPS_BASE_PATH")
