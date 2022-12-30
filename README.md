@@ -1,6 +1,6 @@
 # Consul Template plugin for AWS SSM Parameter Store
 
-[![Build Status](https://travis-ci.com/stanimoto/consul-template-aws-ssmps.svg?branch=master)](https://travis-ci.com/stanimoto/consul-template-aws-ssmps)
+[![Build Status](https://app.travis-ci.com/stanimoto/consul-template-aws-ssmps.svg?branch=master)](https://app.travis-ci.com/stanimoto/consul-template-aws-ssmps)
 
 ## Installation
 
