@@ -15,7 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/ssm/ssmiface"
 )
 
-const version = "0.1.1"
+const version = "0.1.2"
 
 func main() {
 	if !validateArgs(os.Args) {
