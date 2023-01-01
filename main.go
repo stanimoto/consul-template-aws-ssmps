@@ -36,8 +36,8 @@ func main() {
 		}
 	}
 	svc := ssm.New(sess, &aws.Config{
-		Region: awsRegion,
-		Endpoint: aws.String(os.Getenv("SSM_ENDPOINT_URL")),
+		Region:   awsRegion,
+		Endpoint: aws.String(os.Getenv("SSMPS_AWS_SSM_ENDPOINT")),
 	})
 
 	basePath := os.Getenv("SSMPS_BASE_PATH")
@@ -196,7 +196,7 @@ func getMultipleParamValues(svc ssmiface.SSMAPI, names []string) (map[string]str
 		if err != nil {
 			aerr, ok := err.(awserr.Error)
 			if ok {
-				return nil, fmt.Errorf("ssmps returned error: %s message: %s", aerr.Code(), aerr.Message())
+				return nil, fmt.Errorf("ssmps returned error: %s, message: %s", aerr.Code(), aerr.Message())
 			}
 			return nil, fmt.Errorf("ssmps returned unknown error: %s", err)
 		}
