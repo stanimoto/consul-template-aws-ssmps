@@ -1,61 +1,59 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/service/ssm"
-	"github.com/aws/aws-sdk-go/service/ssm/ssmiface"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/aws/aws-sdk-go-v2/service/ssm/types"
 )
 
-type mockSSMClient struct {
-	ssmiface.SSMAPI
-}
+type mockSSMClient struct{}
 
-func (m *mockSSMClient) GetParameter(input *ssm.GetParameterInput) (*ssm.GetParameterOutput, error) {
-	var param *ssm.Parameter
+func (m *mockSSMClient) GetParameter(ctx context.Context, input *ssm.GetParameterInput, optFns ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
+	var param *types.Parameter
 	var err error
 
 	switch *input.Name {
 	case "no param found":
-		param, err = nil, awserr.New(ssm.ErrCodeParameterNotFound, "blah", nil)
+		param, err = nil, &types.ParameterNotFound{}
 	case "no param version found":
-		param, err = nil, awserr.New(ssm.ErrCodeParameterVersionNotFound, "blah", nil)
+		param, err = nil, &types.ParameterVersionNotFound{}
 	case "aws error":
-		param, err = nil, awserr.New(ssm.ErrCodeInvalidKeyId, "blah", nil)
+		param, err = nil, &types.InvalidKeyId{}
 	case "unknown error":
 		param, err = nil, errors.New("Unknown Error")
 	default:
-		param, err = &ssm.Parameter{Value: aws.String(strings.ToUpper(*input.Name))}, nil
+		param, err = &types.Parameter{Value: aws.String(strings.ToUpper(*input.Name))}, nil
 	}
 
 	return &ssm.GetParameterOutput{Parameter: param}, err
 }
 
-func (m *mockSSMClient) GetParameters(input *ssm.GetParametersInput) (*ssm.GetParametersOutput, error) {
+func (m *mockSSMClient) GetParameters(ctx context.Context, input *ssm.GetParametersInput, optFns ...func(*ssm.Options)) (*ssm.GetParametersOutput, error) {
 	var err error
 	output := &ssm.GetParametersOutput{}
 
 	for _, name := range input.Names {
-		switch *name {
+		switch name {
 		case "invalid":
 			output.InvalidParameters = append(output.InvalidParameters, name)
 		case "aws error":
-			err = awserr.New(ssm.ErrCodeInvalidKeyId, "blah", nil)
+			err = &types.InvalidKeyId{}
 		case "unknown error":
 			err = errors.New("Unknown Error")
 		default:
-			nameAndSelector := strings.SplitN(*name, ":", 2)
+			nameAndSelector := strings.SplitN(name, ":", 2)
 			name := nameAndSelector[0]
 			selector := ""
 			if len(nameAndSelector) > 1 {
 				selector = ":" + nameAndSelector[1]
 			}
-			param := &ssm.Parameter{
+			param := types.Parameter{
 				Name:     &name,
 				Selector: &selector,
 				Value:    aws.String(strings.ToUpper(name + "&" + selector)),
@@ -81,7 +79,7 @@ func TestGetMultipleParamValues(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		got, err := getMultipleParamValues(mockSvc, c.args)
+		got, err := getMultipleParamValues(context.Background(), mockSvc, c.args)
 		if err != nil || !reflect.DeepEqual(got, c.want) {
 			t.Errorf("getMutipleParamValues(svc, %q) == %v, want %v", c.args, got, c.want)
 		}
@@ -100,7 +98,7 @@ func TestGetMultipleParamValuesError(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		_, err := getMultipleParamValues(mockSvc, c.args)
+		_, err := getMultipleParamValues(context.Background(), mockSvc, c.args)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("getMutipleParamValues(svc, %q) == %v, want %v", c.args, err, c.want)
 		}
@@ -118,12 +116,12 @@ func TestGetParamValue(t *testing.T) {
 		{"ok", "OK", nil},
 		{"no param found", "", nil},
 		{"no param version found", "", nil},
-		{"aws error", "", errors.New(ssm.ErrCodeInvalidKeyId)},
+		{"aws error", "", errors.New("InvalidKeyId")},
 		{"unknown error", "", errors.New("Unknown Error")},
 	}
 
 	for _, c := range cases {
-		got, err := getParamValue(mockSvc, c.in)
+		got, err := getParamValue(context.Background(), mockSvc, c.in)
 
 		if c.err == nil {
 			if !(got == c.out && err == nil) {
