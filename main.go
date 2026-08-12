@@ -16,7 +16,7 @@ import (
 	"github.com/aws/smithy-go"
 )
 
-const version = "0.1.2"
+const version = "0.2.0"
 
 type ssmClient interface {
 	GetParameter(ctx context.Context, params *ssm.GetParameterInput, optFns ...func(*ssm.Options)) (*ssm.GetParameterOutput, error)
