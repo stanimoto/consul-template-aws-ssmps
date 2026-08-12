@@ -1,44 +1,47 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"strings"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/ec2metadata"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/ssm"
-	"github.com/aws/aws-sdk-go/service/ssm/ssmiface"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/aws/aws-sdk-go-v2/service/ssm/types"
+	"github.com/aws/smithy-go"
 )
 
 const version = "0.1.2"
+
+type ssmClient interface {
+	GetParameter(ctx context.Context, params *ssm.GetParameterInput, optFns ...func(*ssm.Options)) (*ssm.GetParameterOutput, error)
+	GetParameters(ctx context.Context, params *ssm.GetParametersInput, optFns ...func(*ssm.Options)) (*ssm.GetParametersOutput, error)
+}
 
 func main() {
 	if !validateArgs(os.Args) {
 		os.Exit(1)
 	}
 
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
+	ctx := context.Background()
 
-	var awsRegion *string
-	if aws.StringValue(sess.Config.Region) == "" {
-		ec2Session := session.New()
-		ec2Svc := ec2metadata.New(ec2Session)
-		ec2Region, err := ec2Svc.Region()
-		if err == nil {
-			awsRegion = aws.String(ec2Region)
-		}
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithEC2IMDSRegion())
+	if err != nil {
+		log.Fatalf("Failed to load AWS config: %s", err)
 	}
-	svc := ssm.New(sess, &aws.Config{
-		Region:   awsRegion,
-		Endpoint: aws.String(os.Getenv("SSMPS_AWS_SSM_ENDPOINT")),
-	})
+
+	optFns := []func(*ssm.Options){}
+	if endpoint := os.Getenv("SSMPS_AWS_SSM_ENDPOINT"); endpoint != "" {
+		optFns = append(optFns, func(o *ssm.Options) {
+			o.BaseEndpoint = aws.String(endpoint)
+		})
+	}
+	svc := ssm.NewFromConfig(cfg, optFns...)
 
 	basePath := os.Getenv("SSMPS_BASE_PATH")
 	names := os.Args[1:]
@@ -49,7 +52,7 @@ func main() {
 		paths = append(paths, path)
 	}
 
-	pathToValue, err := getMultipleParamValues(svc, paths)
+	pathToValue, err := getMultipleParamValues(ctx, svc, paths)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -145,23 +148,27 @@ func makeBatches(values []string, batchSize int) ([][]string, error) {
 	return batches, nil
 }
 
-func getParamValue(svc ssmiface.SSMAPI, name string) (string, error) {
-	output, err := svc.GetParameter(&ssm.GetParameterInput{
+func getParamValue(ctx context.Context, svc ssmClient, name string) (string, error) {
+	output, err := svc.GetParameter(ctx, &ssm.GetParameterInput{
 		Name:           &name,
 		WithDecryption: aws.Bool(true),
 	})
 
 	if err != nil {
-		aerr, ok := err.(awserr.Error)
-		if ok {
-			switch aerr.Code() {
-			case ssm.ErrCodeParameterNotFound, ssm.ErrCodeParameterVersionNotFound:
-				log.Printf("ssmps(%q) returned no data: %s", name, aerr.Code())
-				return "", nil
-			default:
-				return "", fmt.Errorf("ssmps(%q) returned error: %s", name, aerr.Code())
+		var pnf *types.ParameterNotFound
+		var pvnf *types.ParameterVersionNotFound
+		switch {
+		case errors.As(err, &pnf):
+			log.Printf("ssmps(%q) returned no data: %s", name, pnf.ErrorCode())
+			return "", nil
+		case errors.As(err, &pvnf):
+			log.Printf("ssmps(%q) returned no data: %s", name, pvnf.ErrorCode())
+			return "", nil
+		default:
+			var apiErr smithy.APIError
+			if errors.As(err, &apiErr) {
+				return "", fmt.Errorf("ssmps(%q) returned error: %s", name, apiErr.ErrorCode())
 			}
-		} else {
 			return "", fmt.Errorf("ssmps(%q) returned unknown error: %v", name, err)
 		}
 	}
@@ -169,7 +176,7 @@ func getParamValue(svc ssmiface.SSMAPI, name string) (string, error) {
 	return *output.Parameter.Value, nil
 }
 
-func getMultipleParamValues(svc ssmiface.SSMAPI, names []string) (map[string]string, error) {
+func getMultipleParamValues(ctx context.Context, svc ssmClient, names []string) (map[string]string, error) {
 	batches, err := makeBatches(names, 10) // This is the limit of the GetParameters endpoint.
 	if err != nil {
 		log.Fatalf("ssmps returned error: %s", err)
@@ -182,27 +189,21 @@ func getMultipleParamValues(svc ssmiface.SSMAPI, names []string) (map[string]str
 	}
 
 	for _, batch := range batches {
-		paths := []*string{}
-		for _, path := range batch {
-			copy := path
-			paths = append(paths, &copy)
-		}
-
-		output, err := svc.GetParameters(&ssm.GetParametersInput{
-			Names:          paths,
+		output, err := svc.GetParameters(ctx, &ssm.GetParametersInput{
+			Names:          batch,
 			WithDecryption: aws.Bool(true),
 		})
 
 		if err != nil {
-			aerr, ok := err.(awserr.Error)
-			if ok {
-				return nil, fmt.Errorf("ssmps returned error: %s, message: %s", aerr.Code(), aerr.Message())
+			var apiErr smithy.APIError
+			if errors.As(err, &apiErr) {
+				return nil, fmt.Errorf("ssmps returned error: %s, message: %s", apiErr.ErrorCode(), apiErr.ErrorMessage())
 			}
 			return nil, fmt.Errorf("ssmps returned unknown error: %s", err)
 		}
 
 		for _, p := range output.InvalidParameters {
-			log.Printf("ssmps(%q) returned no data: Invalid Parameter", *p)
+			log.Printf("ssmps(%q) returned no data: Invalid Parameter", p)
 		}
 
 		for _, p := range output.Parameters {
